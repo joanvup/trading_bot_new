@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Trading Bot IA — Dashboard</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:       #0f1117;
+      --surface:  #1a1d27;
+      --border:   #2a2d3e;
+      --text:     #e2e8f0;
+      --muted:    #64748b;
+      --green:    #10b981;
+      --red:      #ef4444;
+      --blue:     #3b82f6;
+      --amber:    #f59e0b;
+      --purple:   #8b5cf6;
+    }
+    body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; font-size: 14px; }
+    .app { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+
+    /* Sidebar */
+    .sidebar { background: var(--surface); border-right: 1px solid var(--border); padding: 20px 0; }
+    .sidebar-title { font-size: 13px; font-weight: 600; color: var(--muted); padding: 0 20px 16px; letter-spacing: .05em; text-transform: uppercase; }
+    .nav-item { display: flex; align-items: center; gap: 10px; padding: 10px 20px; cursor: pointer; color: var(--muted); border-left: 3px solid transparent; transition: all .15s; }
+    .nav-item:hover { color: var(--text); background: rgba(255,255,255,.03); }
+    .nav-item.active { color: var(--blue); border-left-color: var(--blue); background: rgba(59,130,246,.08); }
+    .nav-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+    /* Main */
+    .main { padding: 24px; overflow-y: auto; }
+    .page-title { font-size: 20px; font-weight: 600; margin-bottom: 20px; }
+
+    /* Cards */
+    .grid { display: grid; gap: 16px; }
+    .grid-4 { grid-template-columns: repeat(4, 1fr); }
+    .grid-2 { grid-template-columns: repeat(2, 1fr); }
+    .grid-3 { grid-template-columns: repeat(3, 1fr); }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
+    .card-title { font-size: 11px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }
+    .card-value { font-size: 26px; font-weight: 700; line-height: 1; }
+    .card-sub { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+    /* Status badge */
+    .badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+    .badge-green { background: rgba(16,185,129,.15); color: var(--green); }
+    .badge-red   { background: rgba(239,68,68,.15);  color: var(--red); }
+    .badge-amber { background: rgba(245,158,11,.15); color: var(--amber); }
+    .badge-blue  { background: rgba(59,130,246,.15); color: var(--blue); }
+    .pulse { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+    /* Table */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+    td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 13px; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255,255,255,.02); }
+
+    /* Colors */
+    .green { color: var(--green); }
+    .red   { color: var(--red); }
+    .muted { color: var(--muted); }
+    .long  { color: var(--green); font-weight: 600; }
+    .short { color: var(--red);   font-weight: 600; }
+
+    /* Button */
+    .btn { padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text); transition: all .15s; }
+    .btn:hover { background: rgba(255,255,255,.06); }
+    .btn-red   { border-color: var(--red);   color: var(--red); }
+    .btn-green { border-color: var(--green); color: var(--green); }
+    .btn-blue  { border-color: var(--blue);  color: var(--blue); }
+
+    /* Chart container */
+    .chart-container { position: relative; height: 200px; }
+
+    /* Top bar */
+    .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+    .topbar-right { display: flex; align-items: center; gap: 12px; }
+
+    .section-gap { margin-top: 20px; }
+
+    /* Loading */
+    .loading { color: var(--muted); text-align: center; padding: 40px; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+const API_BASE = window.location.protocol === "file:"
+  ? "http://127.0.0.1:8000/api"
+  : "/api";
+
+function useFetch(endpoint, interval = 3000) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  const fetch_ = useCallback(async () => {
+    try {
+      const r = await fetch(API_BASE + endpoint);
+      if (r.ok) {
+        const d = await r.json();
+        setData(d);
+        setLoading(false);
+        setError(false);
+      }
+    } catch(e) {
+      setError(true);
+    }
+  }, [endpoint]);
+
+  useEffect(() => {
+    fetch_();
+    const t = setInterval(fetch_, interval);
+    return () => clearInterval(t);
+  }, [fetch_, interval]);
+
+  return { data, loading, error };
+}
+
+function fmt(n, dec=2) {
+  if (n == null) return "—";
+  return Number(n).toFixed(dec);
+}
+function fmtPct(n) {
+  if (n == null) return "—";
+  const v = Number(n);
+  return (v >= 0 ? "+" : "") + v.toFixed(2) + "%";
+}
+function fmtUSD(n) {
+  if (n == null) return "—";
+  const v = Number(n);
+  return (v >= 0 ? "+$" : "-$") + Math.abs(v).toFixed(2);
+}
+
+// ── Metric Card ───────────────────────────────────────────────────────────────
+function MetricCard({ title, value, sub, color }) {
+  return (
+    <div className="card">
+      <div className="card-title">{title}</div>
+      <div className="card-value" style={color ? {color} : {}}>{value}</div>
+      {sub && <div className="card-sub">{sub}</div>}
+    </div>
+  );
+}
+
+// ── Status Badge ──────────────────────────────────────────────────────────────
+function StatusBadge({ running, paused }) {
+  if (paused)   return <span className="badge badge-amber"><span className="pulse"/>Pausado</span>;
+  if (running)  return <span className="badge badge-green"><span className="pulse"/>Activo</span>;
+  return <span className="badge badge-red">Detenido</span>;
+}
+
+// ── Equity Chart ──────────────────────────────────────────────────────────────
+function EquityChart({ history }) {
+  const canvasRef = useRef(null);
+  const chartRef  = useRef(null);
+
+  useEffect(() => {
+    if (!history || !canvasRef.current) return;
+
+    const labels   = history.map(h => {
+      const d = new Date(h.timestamp);
+      return d.getHours() + ":" + String(d.getMinutes()).padStart(2,"0");
+    });
+    const balances = history.map(h => h.balance);
+
+    // Si el chart ya existe, solo actualizar los datos sin destruirlo
+    if (chartRef.current) {
+      chartRef.current.data.labels             = labels;
+      chartRef.current.data.datasets[0].data   = balances;
+      chartRef.current.update("none");  // "none" = sin animacion al actualizar
+      return;
+    }
+
+    // Primera vez: crear el chart
+    chartRef.current = new Chart(canvasRef.current, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [{
+          data: balances,
+          borderColor: "#3b82f6",
+          backgroundColor: "rgba(59,130,246,.08)",
+          borderWidth: 2,
+          fill: true,
+          tension: 0.3,
+          pointRadius: 0,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,  // Sin animacion para evitar parpadeos
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: "#64748b", maxTicksLimit: 8 }, grid: { color: "#2a2d3e" } },
+          y: { ticks: { color: "#64748b", callback: v => "$" + v.toFixed(0) }, grid: { color: "#2a2d3e" } },
+        },
+      }
+    });
+    return () => { if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null; } };
+  }, [history]);
+
+  return <div className="chart-container"><canvas ref={canvasRef}/></div>;
+}
+
+// ── Position Card ─────────────────────────────────────────────────────────────
+function PositionCard({ p }) {
+  const isLong = p.direction === "long";
+  const pnlPos = p.unrealized_pnl >= 0;
+  const rPos   = p.r_value >= 0;
+  const sym    = p.symbol.endsWith("USDT") ? p.symbol.slice(0,-4)+"/USDT" : p.symbol;
+  const clamp  = v => Math.max(0, Math.min(100, v || 0));
+  const dec    = v => !v ? 2 : v < 0.001 ? 6 : v < 0.1 ? 5 : v < 10 ? 4 : 2;
+
+  return (
+    <div style={{
+      background:"#0e1017", border:"1px solid #1e2337",
+      borderRadius:12, padding:"18px 20px",
+      display:"flex", flexDirection:"column", gap:16,
+    }}>
+
+      {/* ── Header ── */}
+      <div style={{display:"flex", alignItems:"flex-start", justifyContent:"space-between"}}>
+        <div style={{display:"flex", alignItems:"center", gap:10}}>
+          <span style={{
+            background: isLong ? "#10b981" : "#ef4444",
+            color:"#fff", fontWeight:700, fontSize:12,
+            padding:"4px 14px", borderRadius:6, letterSpacing:".03em",
+          }}>
+            {p.direction.toUpperCase()}
+          </span>
+          <span style={{fontWeight:700, fontSize:18, color:"#e2e8f0"}}>{sym}</span>
+        </div>
+        <div style={{textAlign:"right"}}>
+          <div style={{fontWeight:700, fontSize:17, color: pnlPos?"#10b981":"#ef4444"}}>
+            {pnlPos?"+":""}{fmt(p.unrealized_pnl,2)} USDT
+            <span style={{fontSize:13, marginLeft:6, opacity:.8}}>
+              ({pnlPos?"+":""}{fmt(p.unrealized_pnl_pct,2)}%)
+            </span>
+          </div>
+          <div style={{
+            display:"flex", alignItems:"center", justifyContent:"flex-end",
+            gap:5, marginTop:3, fontSize:12, color: rPos?"#10b981":"#ef4444",
+          }}>
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+              <rect x=".5" y=".5" width="12" height="12" rx="2.5"
+                stroke={rPos?"#10b981":"#ef4444"} strokeOpacity=".7"/>
+              {rPos && <path d="M3 6.5l2.5 2.5L10 4"
+                stroke="#10b981" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>}
+            </svg>
+            {rPos?"+":""}{fmt(p.r_value,2)} R
+          </div>
+        </div>
+      </div>
+
+      {/* ── 4 price metrics ── */}
+      <div style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8}}>
+        {[
+          {label:"PRECIO ACTUAL",  val:p.current_price, color:"#f1f5f9"},
+          {label:"PRECIO ENTRADA", val:p.entry_price,   color:"#94a3b8"},
+          {label:"STOP LOSS",      val:p.stop_loss,     color:"#ef4444"},
+          {label:"TAKE PROFIT",    val:p.take_profit,   color:"#10b981"},
+        ].map(m => (
+          <div key={m.label}>
+            <div style={{fontSize:10, color:"#4b5563", marginBottom:5,
+              textTransform:"uppercase", letterSpacing:".05em"}}>
+              {m.label}
+            </div>
+            <div style={{fontWeight:600, fontSize:15, color:m.color}}>
+              ${fmt(m.val, dec(m.val))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Bar section ── */}
+      <div>
+        {/* Bar */}
+        <div style={{position:"relative", height:5, background:"#1e2337", borderRadius:3}}>
+          {/* Fill */}
+          <div style={{
+            position:"absolute", left:0, top:0, height:"100%", borderRadius:3,
+            width: clamp(p.progress_pct) + "%",
+            background: pnlPos ? "#10b981" : "#ef4444",
+            transition:"width .6s",
+          }}/>
+          {/* Entry marker — thin vertical line */}
+          {p.entry_bar_pct > 1 && p.entry_bar_pct < 99 && (
+            <div style={{
+              position:"absolute", top:-3, left: p.entry_bar_pct+"%",
+              width:2, height:11, background:"#64748b", borderRadius:1,
+              transform:"translateX(-50%)",
+            }}/>
+          )}
+          {/* Meta TS square marker ON the bar — amber */}
+          {p.meta_ts_pct > 1 && p.meta_ts_pct < 99 && !p.trailing_active && (
+            <div style={{
+              position:"absolute", top:-2, left: p.meta_ts_pct+"%",
+              width:8, height:8, background:"#f59e0b", borderRadius:2,
+              transform:"translateX(-50%)",
+            }}/>
+          )}
+          {/* Meta BE square marker ON the bar — orange */}
+          {p.meta_be_pct > 1 && p.meta_be_pct < 99 && !p.breakeven_activated && (
+            <div style={{
+              position:"absolute", top:-2, left: p.meta_be_pct+"%",
+              width:8, height:8, background:"#f97316", borderRadius:2,
+              transform:"translateX(-50%)",
+            }}/>
+          )}
+        </div>
+
+        {/* Meta labels BELOW bar */}
+        <div style={{
+          display:"flex", justifyContent:"space-between",
+          marginTop:8, fontSize:11,
+        }}>
+          <span style={{color:"#64748b"}}>
+            Meta BE ({fmt(p.meta_be_atr ?? 1, 1)}R):{" "}
+            <span style={{color:"#e2e8f0", fontWeight:500}}>
+              {p.meta_be_price > 0 && !p.breakeven_activated
+                ? "$"+fmt(p.meta_be_price, dec(p.meta_be_price))
+                : "—"}
+            </span>
+          </span>
+          <span style={{color:"#64748b"}}>
+            Meta TS ({fmt(p.meta_ts_atr ?? 0.5, 1)}R):{" "}
+            <span style={{color:"#e2e8f0", fontWeight:500}}>
+              {p.meta_ts_price > 0 && !p.trailing_active
+                ? "$"+fmt(p.meta_ts_price, dec(p.meta_ts_price))
+                : "—"}
+            </span>
+          </span>
+        </div>
+      </div>
+
+      {/* ── Funding row ── */}
+      {p.funding_rate !== undefined && p.funding_rate !== 0 && (
+        <div style={{
+          display:"flex", flexWrap:"wrap", gap:14,
+          paddingTop:10, borderTop:"1px solid #1e2337", fontSize:11,
+        }}>
+          <span style={{color: p.funding_favorable?"#10b981":"#ef4444"}}>
+            FR: {p.funding_favorable?"+":""}{fmt(p.funding_rate,4)}%/8h
+          </span>
+          {p.funding_cost_day > 0 && (
+            <span style={{color: p.funding_favorable?"#10b981":"#ef4444"}}>
+              {p.funding_favorable?"+":"-"}${fmt(p.funding_cost_day,2)}/dia
+            </span>
+          )}
+          {p.funding_next && (
+            <span style={{color:"#64748b"}}>Próximo: {p.funding_next}</span>
+          )}
+          {p.sl_atr_distance > 0 && (
+            <span style={{
+              marginLeft:"auto",
+              color: p.sl_atr_distance < 0.8?"#ef4444": p.sl_atr_distance < 1.5?"#f59e0b":"#64748b",
+            }}>
+              SL a {fmt(p.sl_atr_distance,2)} ATR
+            </span>
+          )}
+        </div>
+      )}
+
+    </div>
+  );
+}
+
+// ── Dashboard Page ────────────────────────────────────────────────────────────
+function DashboardPage() {
+  const { data: status, error: statusErr } = useFetch("/status", 2000);
+  const { data: portfolio } = useFetch("/portfolio", 3000);
+  const { data: positions } = useFetch("/positions", 2000);
+
+  const balance  = portfolio?.balance ?? 0;
+  const dd       = portfolio?.drawdown_pct ?? 0;
+  const dailyPnl = portfolio?.daily_pnl ?? 0;
+  const upnl     = positions?.total_unrealized_pnl ?? 0;
+
+  return (
+    <div>
+      {statusErr && (
+        <div style={{
+          background:"rgba(239,68,68,.12)", border:"1px solid rgba(239,68,68,.3)",
+          borderRadius:10, padding:"12px 16px", marginBottom:20,
+          color:"var(--red)", fontSize:13,
+        }}>
+          <strong>API no disponible.</strong> Asegúrate de que el servidor está corriendo:<br/>
+          <code style={{fontSize:12, opacity:.8}}>python api/server.py</code>
+          &nbsp;→ luego abre&nbsp;
+          <a href="http://127.0.0.1:8000" style={{color:"var(--blue)"}}>http://127.0.0.1:8000</a>
+        </div>
+      )}
+      <div className="topbar">
+        <h1 className="page-title">Dashboard</h1>
+        <div className="topbar-right">
+          <StatusBadge running={status?.running} paused={status?.is_paused}/>
+          <span className="muted" style={{fontSize:12}}>
+            {status ? `Ciclo #${status.cycle_count} · Modelo v${status.model_version || "—"}` : "Conectando..."}
+          </span>
+        </div>
+      </div>
+
+      <div className="grid grid-4">
+        <MetricCard title="Balance total"
+          value={"$" + Number(balance).toLocaleString("en",{minimumFractionDigits:2})}
+          sub={`Disponible: $${fmt(portfolio?.available)}`}/>
+        <MetricCard title="PnL no realizado"
+          value={fmtUSD(upnl)}
+          color={upnl >= 0 ? "var(--green)" : "var(--red)"}
+          sub={`${positions?.count ?? 0} posicion(es) abierta(s)`}/>
+        <MetricCard title="PnL del dia"
+          value={fmtUSD(dailyPnl)}
+          color={dailyPnl >= 0 ? "var(--green)" : "var(--red)"}
+          sub={`${portfolio?.trades_today ?? 0} trades hoy`}/>
+        <MetricCard title="Drawdown actual"
+          value={fmt(dd) + "%"}
+          color={dd > 10 ? "var(--red)" : dd > 5 ? "var(--amber)" : "var(--green)"}
+          sub={`Max config: 15%`}/>
+      </div>
+
+      <div className="grid grid-2 section-gap">
+        <div className="card">
+          <div className="card-title">Curva de equity</div>
+          <EquityChart history={portfolio?.history}/>
+        </div>
+        <div className="card">
+          <div className="card-title">Posiciones abiertas</div>
+          {positions?.positions?.length > 0 ? (
+            <div style={{display:"flex",flexDirection:"column",gap:12,marginTop:8}}>
+              {positions.positions.map(p => <PositionCard key={p.symbol} p={p}/>)}
+              <div style={{display:"flex",flexWrap:"wrap",gap:12,padding:"6px 0 0",
+                borderTop:"1px solid var(--border)",fontSize:10,color:"var(--muted)"}}>
+                <span style={{display:"flex",alignItems:"center",gap:4}}>
+                  <span style={{background:"rgba(245,158,11,.2)",color:"var(--amber)",
+                    padding:"1px 5px",borderRadius:3,fontWeight:700}}>TS</span>
+                  Trailing Stop activo
+                </span>
+                <span style={{display:"flex",alignItems:"center",gap:4}}>
+                  <span style={{background:"rgba(59,130,246,.2)",color:"var(--blue)",
+                    padding:"1px 5px",borderRadius:3,fontWeight:700}}>BE</span>
+                  Breakeven activo
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div className="loading">Sin posiciones abiertas</div>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-3 section-gap">
+        <MetricCard title="Portfolio heat"
+          value={fmt(portfolio?.portfolio_heat) + "%"}
+          color={portfolio?.portfolio_heat > 8 ? "var(--red)" : "var(--green)"}
+          sub="% capital en riesgo"/>
+        <MetricCard title="Racha perdedora"
+          value={portfolio?.consecutive_losses ?? 0}
+          color={portfolio?.consecutive_losses >= 3 ? "var(--red)" : "var(--text)"}
+          sub="consecutivas"/>
+        <MetricCard title="Racha ganadora"
+          value={portfolio?.win_streak ?? 0}
+          color="var(--green)"
+          sub="consecutivas"/>
+      </div>
+    </div>
+  );
+}
+
+// ── Trades Page ───────────────────────────────────────────────────────────────
+function TradesPage() {
+  const { data, loading } = useFetch("/trades?limit=50", 10000);
+
+  if (loading) return <div className="loading">Cargando trades...</div>;
+
+  const stats = data?.stats || {};
+
+  return (
+    <div>
+      <h1 className="page-title">Historial de trades</h1>
+
+      <div className="grid grid-4">
+        <MetricCard title="Total trades" value={stats.total_trades ?? 0}/>
+        <MetricCard title="Win rate"
+          value={fmt(stats.win_rate_pct) + "%"}
+          color={stats.win_rate_pct >= 50 ? "var(--green)" : "var(--red)"}
+          sub={`${stats.wins}W / ${stats.losses}L`}/>
+        <MetricCard title="PnL total"
+          value={fmtUSD(stats.total_pnl)}
+          color={stats.total_pnl >= 0 ? "var(--green)" : "var(--red)"}/>
+        <MetricCard title="PnL promedio"
+          value={fmtUSD(stats.avg_pnl)}
+          color={stats.avg_pnl >= 0 ? "var(--green)" : "var(--red)"}/>
+      </div>
+
+      <div className="card section-gap">
+        <div className="card-title">Trades recientes</div>
+        <div className="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Simbolo</th><th>Dir.</th><th>Entrada</th><th>Salida</th>
+              <th>Qty</th><th>Lev</th><th>Net PnL</th><th>Motivo</th><th>Duracion</th>
+            </tr></thead>
+            <tbody>
+              {(data?.trades || []).map(t => (
+                <tr key={t.id}>
+                  <td style={{fontWeight:600}}>{t.symbol}</td>
+                  <td className={t.direction}>{t.direction.toUpperCase()}</td>
+                  <td>${fmt(t.entry_price, 4)}</td>
+                  <td>{t.exit_price ? "$" + fmt(t.exit_price, 4) : "—"}</td>
+                  <td>{fmt(t.quantity, 4)}</td>
+                  <td>{t.leverage}x</td>
+                  <td className={t.net_pnl >= 0 ? "green" : "red"}>
+                    {t.net_pnl != null ? fmtUSD(t.net_pnl) : "—"}
+                  </td>
+                  <td className="muted">{t.close_reason || "—"}</td>
+                  <td className="muted">
+                    {t.duration_secs ? Math.round(t.duration_secs/60) + "m" : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Signals Page ──────────────────────────────────────────────────────────────
+function SignalsPage() {
+  const { data, loading } = useFetch("/signals?limit=30", 5000);
+  const { data: topData } = useFetch("/top-symbols", 10000);
+
+  if (loading) return <div className="loading">Cargando señales...</div>;
+
+  return (
+    <div>
+      <h1 className="page-title">Señales del modelo IA</h1>
+
+      <div className="grid grid-2">
+        <div className="card">
+          <div className="card-title">Señales recientes (BUY/SELL)</div>
+          <div className="table-wrap">
+            <table>
+              <thead><tr>
+                <th>Simbolo</th><th>Señal</th><th>Conf.</th>
+                <th>Precio</th><th>TF</th><th>Hora</th>
+              </tr></thead>
+              <tbody>
+                {(data?.signals || []).map(s => (
+                  <tr key={s.id}>
+                    <td style={{fontWeight:600}}>{s.symbol}</td>
+                    <td>
+                      <span className={"badge " + (s.signal_type === "buy" ? "badge-green" : "badge-red")}>
+                        {s.signal_type.toUpperCase()}
+                      </span>
+                    </td>
+                    <td style={{color: s.confidence > 0.7 ? "var(--green)" : "var(--text)"}}>
+                      {(s.confidence * 100).toFixed(1)}%
+                    </td>
+                    <td>${fmt(s.price, 4)}</td>
+                    <td className="muted">{s.timeframe}</td>
+                    <td className="muted">
+                      {new Date(s.created_at).toLocaleTimeString("es", {hour:"2-digit", minute:"2-digit"})}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-title">Top simbolos del dia</div>
+          <div className="table-wrap">
+            <table>
+              <thead><tr>
+                <th>#</th><th>Simbolo</th><th>Score</th>
+                <th>Cambio 24h</th><th>Vol (M$)</th><th>Dir.</th>
+              </tr></thead>
+              <tbody>
+                {(topData?.symbols || []).slice(0,15).map(s => (
+                  <tr key={s.symbol}>
+                    <td className="muted">{s.rank}</td>
+                    <td style={{fontWeight:600}}>{s.symbol}</td>
+                    <td style={{color:"var(--blue)"}}>{fmt(s.score)}</td>
+                    <td className={s.change_24h_pct >= 0 ? "green" : "red"}>
+                      {fmtPct(s.change_24h_pct)}
+                    </td>
+                    <td className="muted">{fmt(s.volume_24h_usdt)}M</td>
+                    <td className={s.direction === "long" ? "long" : s.direction === "short" ? "short" : "muted"}>
+                      {s.direction}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Model Page ────────────────────────────────────────────────────────────────
+function ModelPage() {
+  const { data, loading } = useFetch("/model", 15000);
+
+  if (loading) return <div className="loading">Cargando info del modelo...</div>;
+
+  const m = data?.active_model || {};
+
+  return (
+    <div>
+      <h1 className="page-title">Modelo de IA</h1>
+
+      <div className="grid grid-4">
+        <MetricCard title="Version activa" value={m.version || "—"} sub="LightGBM"/>
+        <MetricCard title="Test accuracy"
+          value={m.test_accuracy ? (m.test_accuracy * 100).toFixed(1) + "%" : "—"}
+          color="var(--blue)"/>
+        <MetricCard title="F1 score"
+          value={m.f1_weighted ? (m.f1_weighted * 100).toFixed(1) + "%" : "—"}
+          color="var(--purple)"/>
+        <MetricCard title="Features" value={m.n_features || "—"} sub="variables de entrada"/>
+      </div>
+
+      <div className="grid grid-3 section-gap">
+        <MetricCard title="F1 BUY"
+          value={m.f1_buy ? (m.f1_buy * 100).toFixed(1) + "%" : "—"}
+          color="var(--green)"/>
+        <MetricCard title="F1 SELL"
+          value={m.f1_sell ? (m.f1_sell * 100).toFixed(1) + "%" : "—"}
+          color="var(--red)"/>
+        <div className="card">
+          <div className="card-title">Estado reentrenamiento</div>
+          <div style={{fontSize:13, marginTop:8}}>
+            <div>Conteo: <span style={{color:"var(--blue)"}}>{data?.retrain_status?.retrain_count ?? 0}</span></div>
+            <div style={{marginTop:4}}>Intervalo: <span className="muted">{data?.retrain_status?.interval_hours}h</span></div>
+            <div style={{marginTop:4}}>Ultimo: <span className="muted">
+              {data?.retrain_status?.last_retrain
+                ? new Date(data.retrain_status.last_retrain).toLocaleString("es")
+                : "Nunca"}
+            </span></div>
+          </div>
+        </div>
+      </div>
+
+      {m.top_features && Object.keys(m.top_features).length > 0 && (
+        <div className="card section-gap">
+          <div className="card-title">Top 10 features mas importantes</div>
+          <div style={{marginTop:12}}>
+            {Object.entries(m.top_features).map(([feat, imp]) => (
+              <div key={feat} style={{display:"flex", alignItems:"center", gap:12, marginBottom:8}}>
+                <span style={{width:160, fontSize:12, color:"var(--muted)"}}>{feat}</span>
+                <div style={{flex:1, background:"var(--border)", borderRadius:4, height:8}}>
+                  <div style={{
+                    width: (imp / Math.max(...Object.values(m.top_features)) * 100) + "%",
+                    background: "var(--blue)", height:"100%", borderRadius:4
+                  }}/>
+                </div>
+                <span style={{width:40, textAlign:"right", fontSize:12}}>{fmt(imp)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="card section-gap">
+        <div className="card-title">Historial de entrenamientos</div>
+        <div className="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Version</th><th>Fecha</th><th>Accuracy</th>
+              <th>F1</th><th>Muestras</th><th>Duracion</th><th>Estado</th>
+            </tr></thead>
+            <tbody>
+              {(data?.training_history || []).map(r => (
+                <tr key={r.version}>
+                  <td style={{fontFamily:"monospace"}}>{r.version}</td>
+                  <td className="muted">{new Date(r.trained_at).toLocaleString("es")}</td>
+                  <td>{r.test_accuracy ? (r.test_accuracy*100).toFixed(1)+"%" : "—"}</td>
+                  <td>{r.f1_score ? (r.f1_score*100).toFixed(1)+"%" : "—"}</td>
+                  <td className="muted">{r.train_samples?.toLocaleString()}</td>
+                  <td className="muted">{r.duration_secs ? r.duration_secs + "s" : "—"}</td>
+                  <td>
+                    {r.is_deployed
+                      ? <span className="badge badge-green">Activo</span>
+                      : <span className="badge" style={{background:"rgba(100,116,139,.15)", color:"var(--muted)"}}>Archivado</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Control Page ──────────────────────────────────────────────────────────────
+function ControlPage() {
+  const { data: status } = useFetch("/status", 2000);
+  const [msg, setMsg] = useState(null);
+
+  async function sendCmd(action) {
+    try {
+      const r = await fetch(API_BASE + "/control", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({action}),
+      });
+      const d = await r.json();
+      setMsg({ ok: r.ok, text: d.message || d.detail });
+      setTimeout(() => setMsg(null), 4000);
+    } catch(e) {
+      setMsg({ ok: false, text: "Error conectando con la API" });
+    }
+  }
+
+  return (
+    <div>
+      <h1 className="page-title">Control del bot</h1>
+
+      <div className="grid grid-2">
+        <div className="card">
+          <div className="card-title">Estado actual</div>
+          <div style={{marginTop:12, display:"flex", flexDirection:"column", gap:10}}>
+            <div style={{display:"flex", justifyContent:"space-between"}}>
+              <span className="muted">Estado</span>
+              <StatusBadge running={status?.running} paused={status?.is_paused}/>
+            </div>
+            <div style={{display:"flex", justifyContent:"space-between"}}>
+              <span className="muted">Modo</span>
+              <span className="badge badge-blue">{status?.mode?.toUpperCase() || "—"}</span>
+            </div>
+            <div style={{display:"flex", justifyContent:"space-between"}}>
+              <span className="muted">Ciclos ejecutados</span>
+              <span>{status?.cycle_count ?? "—"}</span>
+            </div>
+            <div style={{display:"flex", justifyContent:"space-between"}}>
+              <span className="muted">Posiciones abiertas</span>
+              <span>{status?.open_positions ?? 0}</span>
+            </div>
+            {status?.is_paused && (
+              <div style={{marginTop:8, padding:"8px 12px", background:"rgba(245,158,11,.1)", borderRadius:8, fontSize:12, color:"var(--amber)"}}>
+                Razon: {status.pause_reason}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-title">Acciones</div>
+          <div style={{display:"flex", flexDirection:"column", gap:10, marginTop:12}}>
+            <button className="btn btn-amber" onClick={() => sendCmd("pause")}
+              disabled={status?.is_paused}>
+              Pausar trading
+            </button>
+            <button className="btn btn-green" onClick={() => sendCmd("resume")}
+              disabled={!status?.is_paused}>
+              Reanudar trading
+            </button>
+            <button className="btn btn-blue" onClick={() => sendCmd("retrain")}>
+              Forzar reentrenamiento
+            </button>
+          </div>
+          {msg && (
+            <div style={{
+              marginTop:12, padding:"8px 12px", borderRadius:8, fontSize:12,
+              background: msg.ok ? "rgba(16,185,129,.1)" : "rgba(239,68,68,.1)",
+              color: msg.ok ? "var(--green)" : "var(--red)",
+            }}>
+              {msg.text}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── App Shell ─────────────────────────────────────────────────────────────────
+const PAGES = [
+  { id: "dashboard", label: "Dashboard",      color: "var(--blue)" },
+  { id: "trades",    label: "Trades",          color: "var(--green)" },
+  { id: "signals",   label: "Señales IA",      color: "var(--purple)" },
+  { id: "model",     label: "Modelo",          color: "var(--amber)" },
+  { id: "control",   label: "Control",         color: "var(--red)" },
+];
+
+function App() {
+  const [page, setPage] = useState("dashboard");
+
+  const PageComp = {
+    dashboard: DashboardPage,
+    trades:    TradesPage,
+    signals:   SignalsPage,
+    model:     ModelPage,
+    control:   ControlPage,
+  }[page];
+
+  return (
+    <div className="app">
+      <nav className="sidebar">
+        <div className="sidebar-title">Trading Bot IA</div>
+        {PAGES.map(p => (
+          <div key={p.id}
+            className={"nav-item" + (page === p.id ? " active" : "")}
+            onClick={() => setPage(p.id)}>
+            <span className="nav-dot" style={{background: page === p.id ? p.color : "var(--border)"}}/>
+            {p.label}
+          </div>
+        ))}
+      </nav>
+      <main className="main">
+        <PageComp/>
+      </main>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

@@ -1,0 +1,62 @@
+# ============================================================
+# TRADING BOT - Requirements
+# Python 3.11+
+# ============================================================
+
+# --- Binance API ---
+python-binance
+websocket-client
+aiohttp
+
+# --- Base de datos ---
+sqlalchemy
+alembic
+psycopg2-binary
+asyncpg
+
+# --- Análisis técnico ---
+pandas
+numpy
+pandas-ta
+ta-lib        # Requiere instalación previa de TA-Lib C library
+scipy
+
+# --- Machine Learning ---
+scikit-learn
+lightgbm
+xgboost
+optuna         # Hyperparameter tuning
+joblib
+
+# --- Deep Learning ---
+torch
+torchvision
+
+# --- FastAPI backend ---
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+python-multipart
+aiofiles
+
+# --- Configuración y utilidades ---
+python-dotenv
+loguru
+rich
+click
+httpx
+orjson
+
+# --- Visualización y análisis ---
+plotly
+matplotlib
+
+# --- Scheduling ---
+apscheduler
+asyncio-throttle
+
+# --- Testing ---
+pytest
+pytest-asyncio
+pytest-cov
