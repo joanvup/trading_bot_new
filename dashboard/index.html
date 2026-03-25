@@ -281,14 +281,31 @@ function PositionCard({ p }) {
       {/* 4 price metrics */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
         {[
-          {label:"PRECIO ACTUAL", val:p.current_price,color:"#f1f5f9"},
-          {label:"PRECIO ENTRADA",val:p.entry_price,  color:"#94a3b8"},
-          {label:"STOP LOSS",     val:p.stop_loss,    color:"#ef4444"},
-          {label:"TAKE PROFIT",   val:p.take_profit,  color:"#10b981"},
+          {label:"PRECIO ACTUAL", val:p.current_price, color:"#f1f5f9"},
+          {label:"PRECIO ENTRADA",val:p.entry_price,   color:"#94a3b8"},
+          {label:"STOP LOSS",     val:p.stop_loss,     color:"#ef4444"},
+          {label:"TAKE PROFIT",   val:p.take_profit,   color:"#10b981"},
         ].map(m => (
           <div key={m.label}>
-            <div style={{fontSize:10,color:"#4b5563",marginBottom:5,textTransform:"uppercase",letterSpacing:".05em"}}>{m.label}</div>
-            <div style={{fontWeight:600,fontSize:15,color:m.color}}>${fmt(m.val,dec(m.val))}</div>
+            <div style={{fontSize:10,color:"#4b5563",marginBottom:5,textTransform:"uppercase",letterSpacing:".05em"}}>
+              {m.label}
+              {m.label==="STOP LOSS" && p.trailing_active && (
+                <span style={{marginLeft:5}}>🚀</span>
+              )}
+            </div>
+            {m.label==="TAKE PROFIT" && p.be_active_no_tp ? (
+              <div style={{fontWeight:600,fontSize:14,color:"#10b981",display:"flex",alignItems:"center",gap:5}}>
+                Corriendo
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                  <rect x=".5" y=".5" width="13" height="13" rx="2" stroke="#10b981" strokeOpacity=".6"/>
+                  <path d="M3 7l2.5 2.5L11 4" stroke="#10b981" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </div>
+            ) : (
+              <div style={{fontWeight:600,fontSize:15,color:m.color}}>
+                ${fmt(m.val, dec(m.val))}
+              </div>
+            )}
           </div>
         ))}
       </div>

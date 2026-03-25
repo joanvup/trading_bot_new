@@ -191,7 +191,19 @@ async def get_positions():
 
         # Distancia actual al SL y TP en % del precio actual
         sl_dist_pct = abs(live_price - pos.current_sl) / live_price * 100 if live_price > 0 else 0
-        tp_dist_pct = abs(live_price - pos.take_profit) / live_price * 100 if live_price > 0 else 0
+        # Detectar si el BE esta activo (take_profit = inf significa sin TP)
+        be_active_tp = (
+            pos.take_profit == float("inf") or
+            (pos.direction == "short" and pos.take_profit == 0.0)
+        )
+        # Usar None para el TP cuando BE esta activo — JSON no acepta inf
+        tp_for_display = None if be_active_tp else pos.take_profit
+        tp_for_display_safe = tp_for_display or 0.0
+
+        tp_dist_pct = (
+            abs(live_price - tp_for_display_safe) / live_price * 100
+            if live_price > 0 and not be_active_tp else 0
+        )
 
         # ATR — si BD no tiene suficientes velas, obtener directo de Binance
         atr_value   = 0.0
@@ -251,7 +263,7 @@ async def get_positions():
             meta_ts_price = round(pos.entry_price - trail_atr_setting * atr_value, 8) if atr_value > 0 else 0
 
         # Barra de progreso: 0%=SL, 100%=TP
-        total_range = abs(pos.take_profit - pos.current_sl)
+        total_range = abs(tp_for_display_safe - pos.current_sl) if not be_active_tp else abs(pos.current_sl * 0.1)
 
         def _to_bar(price):
             if total_range <= 0 or not price:
@@ -303,9 +315,10 @@ async def get_positions():
             "stop_loss_original": pos.original_sl,
             "sl_distance_pct":    round(sl_dist_pct, 3),
 
-            # TP info
-            "take_profit":        pos.take_profit,
+            # TP info — None cuando BE esta activo (sin limite de ganancia)
+            "take_profit":        tp_for_display,   # None si BE activo
             "tp_distance_pct":    round(tp_dist_pct, 3),
+            "be_active_no_tp":    be_active_tp,     # indica al dashboard que no hay TP
 
             # Trailing stop
             "trailing_active":    trailing_active,
