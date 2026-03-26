@@ -58,43 +58,47 @@ class PortfolioManager:
 
     async def sync(self, current_prices: Optional[dict] = None) -> dict:
         """
-        Sincroniza el balance desde Binance y actualiza el RiskManager.
+        Sincroniza el balance y actualiza el RiskManager.
 
-        Args:
-            current_prices: Precios actuales para calcular PnL no realizado
+        REGLAS:
+        - dry_run:     balance = INITIAL_CAPITAL + suma de PnL de trades CERRADOS
+                       drawdown se calcula sobre este balance realizado
+        - testnet/live: balance viene de Binance (wallet balance, sin unrealized)
+                       drawdown se calcula sobre wallet balance
 
-        Returns:
-            Dict con el estado actual del portfolio
+        El PnL no realizado (posiciones abiertas) NO afecta el balance ni el drawdown.
+        Solo es informativo para el dashboard.
         """
         try:
-            raw = self.client.get_account_balance()
-            total_balance     = float(raw.get("totalWalletBalance", self._last_balance))
-            available_balance = float(raw.get("availableBalance", total_balance))
-            unrealized_pnl    = float(raw.get("totalUnrealizedProfit", 0))
+            unrealized_pnl = 0.0
 
-            if self.client.is_dry_run and current_prices:
-                # En dry_run: balance real = capital_inicial + PnL_no_realizado
-                # IMPORTANTE: usar initial_capital como base, no _last_balance,
-                # para evitar acumulacion exponencial del PnL no realizado en cada sync
-                unrealized_pnl    = self.executor.get_total_unrealized_pnl(current_prices)
-                total_balance     = self.settings.initial_capital + unrealized_pnl
-                available_balance = self.settings.initial_capital  # el margen lo gestiona Binance
-            elif not self.client.is_dry_run:
-                # En testnet/live: sincronizar entry_price real desde Binance
-                # para que el PnL local coincida con el de Binance
+            if self.client.is_dry_run:
+                # ── Balance real en dry_run = capital inicial + PnL realizado ──
+                realized_pnl = await self._get_realized_pnl()
+                total_balance     = self.settings.initial_capital + realized_pnl
+                available_balance = total_balance  # simplificacion para dry_run
+
+                # PnL no realizado es solo informativo
+                if current_prices:
+                    unrealized_pnl = self.executor.get_total_unrealized_pnl(current_prices)
+
+            else:
+                # ── Testnet/Live: obtener wallet balance de Binance ────────────
+                raw = self.client.get_account_balance()
+                # totalWalletBalance = balance real sin incluir unrealized PnL
+                total_balance     = float(raw.get("totalWalletBalance", self._last_balance))
+                available_balance = float(raw.get("availableBalance", total_balance))
+                unrealized_pnl    = float(raw.get("totalUnrealizedProfit", 0))
+
+                # Sincronizar entry_price real desde Binance
                 try:
                     binance_positions = self.client.get_open_positions()
                     for bp in binance_positions:
                         sym   = bp.get("symbol", "")
                         entry = float(bp.get("entryPrice", 0))
-                        upnl  = float(bp.get("unRealizedProfit", 0))
                         if sym in self.executor.open_positions and entry > 0:
                             pos = self.executor.open_positions[sym]
                             if abs(pos.entry_price - entry) > entry * 0.001:
-                                log.debug(
-                                    f"Corrigiendo entry_price {sym}: "
-                                    f"{pos.entry_price:.8f} -> {entry:.8f}"
-                                )
                                 pos.entry_price = entry
                 except Exception:
                     pass
@@ -102,14 +106,13 @@ class PortfolioManager:
             self._last_balance = total_balance
             self._last_sync    = datetime.now(timezone.utc)
 
-            # Actualizar RiskManager
+            # Actualizar RiskManager con balance REALIZADO (sin unrealized)
             self.risk_mgr.update_balance(
                 total_balance=total_balance,
                 available_balance=available_balance,
                 unrealized_pnl=unrealized_pnl,
             )
 
-            # Calcular portfolio heat (% capital en riesgo en posiciones abiertas)
             heat = self._calc_portfolio_heat(total_balance, current_prices or {})
             self.risk_mgr.update_open_positions(
                 count=self.executor.open_count,
@@ -128,6 +131,51 @@ class PortfolioManager:
         except Exception as e:
             log.warning(f"Error sincronizando balance: {e}")
             return {}
+
+    async def sync_after_close(self, pnl: float, current_prices: Optional[dict] = None) -> None:
+        """
+        Llamar DESPUES de cerrar un trade para actualizar balance y drawdown.
+        Este es el unico momento donde el drawdown debe recalcularse.
+        """
+        if self.client.is_dry_run:
+            realized_pnl  = await self._get_realized_pnl()
+            total_balance = self.settings.initial_capital + realized_pnl
+        else:
+            raw = self.client.get_account_balance()
+            total_balance = float(raw.get("totalWalletBalance", self._last_balance))
+
+        self._last_balance = total_balance
+        available_balance  = total_balance
+
+        # Actualizar peak y drawdown SOLO con balance realizado post-cierre
+        self.risk_mgr.state.total_balance     = total_balance
+        self.risk_mgr.state.available_balance = available_balance
+        self.risk_mgr.state.update_peak()
+        self.risk_mgr.state.calc_drawdown()
+        self.risk_mgr._check_pause_conditions()
+
+        log.info(
+            f"Balance actualizado post-cierre: ${total_balance:.2f} | "
+            f"PnL trade: ${pnl:+.2f} | "
+            f"DD: {self.risk_mgr.state.current_drawdown*100:.2f}%"
+        )
+
+    async def _get_realized_pnl(self) -> float:
+        """Suma el net_pnl de todos los trades cerrados en la BD."""
+        try:
+            from database.models import Trade
+            from sqlalchemy import select, func
+            async with self.db.async_session() as session:
+                stmt = select(func.coalesce(func.sum(Trade.net_pnl), 0)).where(
+                    Trade.status == "closed",
+                    Trade.is_dry_run == True,
+                )
+                result = await session.execute(stmt)
+                total  = result.scalar() or 0
+                return float(total)
+        except Exception as e:
+            log.warning(f"Error obteniendo PnL realizado: {e}")
+            return 0.0
 
     def _calc_portfolio_heat(
         self, total_balance: float, current_prices: dict

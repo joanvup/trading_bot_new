@@ -140,20 +140,15 @@ class RiskManager:
         available_balance: float,
         unrealized_pnl:    float = 0.0,
     ) -> None:
-        """Actualiza el estado del balance y calcula drawdown."""
+        """
+        Actualiza el balance para el dashboard y calculos de sizing.
+        NO recalcula el drawdown — eso solo ocurre en sync_after_close()
+        cuando se cierra un trade real.
+        """
         self.state.total_balance     = total_balance
         self.state.available_balance = available_balance
-        self.state.update_peak()
-        self.state.calc_drawdown()
-
-        # Verificar si hay que pausar
-        self._check_pause_conditions()
-
-        log.debug(
-            f"Balance: ${total_balance:,.2f} | "
-            f"DD: {self.state.current_drawdown*100:.2f}% | "
-            f"Paused: {self.state.is_paused}"
-        )
+        # NO llamar update_peak() ni calc_drawdown() aqui
+        # El peak y drawdown se actualizan unicamente al cerrar trades
 
     def update_open_positions(self, count: int, heat: float = 0.0) -> None:
         """Actualiza numero de posiciones abiertas y heat."""

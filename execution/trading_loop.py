@@ -278,31 +278,33 @@ class TradingLoop:
 
 
             # ── 1. BREAKEVEN ───────────────────────────────────────────────────
-            # Mover SL a entrada cuando precio_move >= BREAKEVEN_ATR * ATR
-            # Ademas: eliminar el TP — la posicion se mantendra indefinidamente
-            # y solo el trailing stop la cerrara
+            # El SL se coloca en la entrada + un buffer de 0.1 * ATR
+            # para absorber slippage y no cerrar inmediatamente
             be_atr = self.settings.breakeven_atr
             if be_atr > 0 and atr > 0 and price_move >= be_atr * atr:
                 if pos.direction == "long" and pos.current_sl < pos.entry_price:
-                    new_sl = pos.entry_price * 1.0001
+                    # Buffer = 0.1 ATR por encima de la entrada para absorber slippage
+                    be_buffer = atr * 0.1
+                    new_sl = pos.entry_price + be_buffer
                     await self.executor._update_sl_order(pos, new_sl)
                     pos.current_sl  = new_sl
-                    pos.take_profit = float("inf")   # sin TP — ganancias ilimitadas
+                    pos.take_profit = float("inf")
                     await self._save_position_state(pos, be_activated=True)
                     log.info(
                         f"BREAKEVEN {symbol} | "
-                        f"SL -> entrada {new_sl:.8f} | "
+                        f"SL -> {new_sl:.8f} (entrada {pos.entry_price:.8f} + {be_buffer:.8f} buffer) | "
                         f"TP eliminado — solo trailing stop cerrara la posicion"
                     )
                 elif pos.direction == "short" and pos.current_sl > pos.entry_price:
-                    new_sl = pos.entry_price * 0.9999
+                    be_buffer = atr * 0.1
+                    new_sl = pos.entry_price - be_buffer
                     await self.executor._update_sl_order(pos, new_sl)
                     pos.current_sl  = new_sl
-                    pos.take_profit = 0.0            # sin TP para short
+                    pos.take_profit = 0.0
                     await self._save_position_state(pos, be_activated=True)
                     log.info(
                         f"BREAKEVEN {symbol} | "
-                        f"SL -> entrada {new_sl:.8f} | "
+                        f"SL -> {new_sl:.8f} (entrada {pos.entry_price:.8f} - {be_buffer:.8f} buffer) | "
                         f"TP eliminado — solo trailing stop cerrara la posicion"
                     )
 
@@ -341,25 +343,35 @@ class TradingLoop:
                     await self._save_position_state(pos)   # persistir SL en BD
 
             # ── 3. SL / TP HIT ─────────────────────────────────────────────────
-            hit_reason = None
+            hit_reason  = None
+            close_price = price  # precio por defecto = precio actual del WebSocket
+
             if pos.direction == "long":
                 if price <= pos.current_sl:
-                    hit_reason = "sl_hit"
+                    hit_reason  = "sl_hit"
+                    # En dry_run usar el precio del SL como exit (evita slippage negativo)
+                    # En testnet/live Binance ejecuta la orden al precio de mercado real
+                    close_price = pos.current_sl if self.client.is_dry_run else price
                 elif pos.take_profit != float("inf") and price >= pos.take_profit:
-                    hit_reason = "tp_hit"
+                    hit_reason  = "tp_hit"
+                    close_price = pos.take_profit if self.client.is_dry_run else price
             else:
                 if price >= pos.current_sl:
-                    hit_reason = "sl_hit"
+                    hit_reason  = "sl_hit"
+                    close_price = pos.current_sl if self.client.is_dry_run else price
                 elif pos.take_profit > 0 and price <= pos.take_profit:
-                    hit_reason = "tp_hit"
+                    hit_reason  = "tp_hit"
+                    close_price = pos.take_profit if self.client.is_dry_run else price
 
             if hit_reason:
-                closed = await self.executor.close_position(pos, hit_reason, price)
+                closed = await self.executor.close_position(pos, hit_reason, close_price)
                 if closed:
-                    won = pos.calc_unrealized_pnl(price) > 0
-                    self.risk_mgr.record_trade_closed(
-                        won=won,
-                        pnl=pos.calc_unrealized_pnl(price),
+                    pnl = pos.calc_unrealized_pnl(close_price)
+                    won = pnl > 0
+                    self.risk_mgr.record_trade_closed(won=won, pnl=pnl)
+                    await self.portfolio.sync_after_close(
+                        pnl=pnl,
+                        current_prices=current_prices,
                     )
 
     async def _save_position_state(
